@@ -13,7 +13,8 @@ struct ContentView: View {
                      "Prince Edward Island", "New Brunswick", "Quebec", "Manitoba",
                      "Saskatchewan", "Alberta", "British Columbia"]
     let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    let years = Array(2017...2024)
+    let years = Array(2022...2024)
+    private let calendar = Calendar.current
 
     var body: some View {
         NavigationView {
@@ -71,7 +72,7 @@ struct ContentView: View {
                     List {
                         ForEach(Array(results.keys), id: \.self) { vector in
                             Section(header: Text("Vector: \(vector)")) {
-                                ForEach(results[vector]!, id: \.month) { result in
+                                ForEach(results[vector]!, id: \.year) { result in
                                     Text("\(result.year) - \(months[result.month - 1]): \(result.value) (\(result.product))")
                                 }
                             }
@@ -97,75 +98,85 @@ struct ContentView: View {
         let vectors = vectorsText.components(separatedBy: .newlines)
             .filter { !$0.isEmpty }
 
-        let yearsToFetch = [2023, 2024] // Years to fetch data for
-
         let group = DispatchGroup()
-        for year in yearsToFetch {
-            for month in 1...12 {
-                for vector in vectors {
-                    group.enter()
+        for vector in vectors {
+            // Fetch data for the selected month across all three years
+            for year in years {
+                group.enter()
 
-                    let startDate = "\(year)-\(String(format: "%02d", month))-01"
-                    let endDate = "\(year)-\(String(format: "%02d", month))-31" // Adjust for months with less than 31 days
-                    let apiUrl = "https://www150.statcan.gc.ca/t1/wds/rest/getDataFromVectorByReferencePeriodRange?vectorIds=\(vector)&startRefPeriod=\(startDate)&endReferencePeriod=\(endDate)"
+                // Correctly create DateComponents and Date
+                var dateComponents = calendar.dateComponents([.year, .month], from: Date())
+                dateComponents.year = year
+                dateComponents.month = selectedMonth
 
-                    print("Fetching data for vector: \(vector), year: \(year), month: \(month)")
-                    print("API URL: \(apiUrl)")
+                guard let date = calendar.date(from: dateComponents) else {
+                    DispatchQueue.main.async {
+                        errorMessage = "Error creating date"
+                        isLoadingData = false
+                    }
+                    return
+                }
 
-                    guard let url = URL(string: apiUrl) else {
+                let startDate = "\(year)-\(String(format: "%02d", selectedMonth))-01"
+                let endDate = "\(year)-\(String(format: "%02d", selectedMonth))-\(calendar.component(.day, from: date))"
+                let apiUrl = "https://www150.statcan.gc.ca/t1/wds/rest/getDataFromVectorByReferencePeriodRange?vectorIds=\(vector)&startRefPeriod=\(startDate)&endReferencePeriod=\(endDate)"
+
+                print("Fetching data for vector: \(vector), year: \(year), month: \(selectedMonth)")
+                print("API URL: \(apiUrl)")
+
+                guard let url = URL(string: apiUrl) else {
+                    DispatchQueue.main.async {
+                        errorMessage = "Invalid API URL"
+                        isLoadingData = false
+                    }
+                    return
+                }
+
+                URLSession.shared.dataTask(with: url) { data, response, error in
+                    defer { group.leave() }
+                    if let error = error {
                         DispatchQueue.main.async {
-                            errorMessage = "Invalid API URL"
-                            isLoadingData = false
+                            errorMessage = "Error fetching data: \(error.localizedDescription)"
+                            print("Error fetching data for vector \(vector): \(error.localizedDescription)")
                         }
                         return
                     }
 
-                    URLSession.shared.dataTask(with: url) { data, response, error in
-                        defer { group.leave() }
-                        if let error = error {
-                            DispatchQueue.main.async {
-                                errorMessage = "Error fetching data: \(error.localizedDescription)"
-                                print("Error fetching data for vector \(vector): \(error.localizedDescription)")
-                            }
-                            return
+                    guard let data = data else {
+                        DispatchQueue.main.async {
+                            errorMessage = "No data received for vector \(vector)"
+                            print("No data received for vector \(vector)")
                         }
+                        return
+                    }
 
-                        guard let data = data else {
-                            DispatchQueue.main.async {
-                                errorMessage = "No data received for vector \(vector)"
-                                print("No data received for vector \(vector)")
-                            }
-                            return
-                        }
+                    do {
+                        let decoder = JSONDecoder()
+                        let apiResponse = try decoder.decode([APIResponse].self, from: data)
 
-                        do {
-                            let decoder = JSONDecoder()
-                            let apiResponse = try decoder.decode([APIResponse].self, from: data)
-
-                            if let value = apiResponse.first?.object?.vectorDataPoint.first?.value {
-                                // Fetch series information to get the product string
-                                fetchSeriesInfo(for: vector) { productString in
-                                    DispatchQueue.main.async {
-                                        if self.results[vector] == nil {
-                                            self.results[vector] = []
-                                        }
-                                        self.results[vector]?.append((year: year, month: month, value: String(format: "%.2f", value), product: productString))
-                                    }
-                                }
-                            } else {
+                        if let value = apiResponse.first?.object?.vectorDataPoint.first?.value {
+                            // Fetch series information to get the product string
+                            fetchSeriesInfo(for: vector) { productString in
                                 DispatchQueue.main.async {
-                                    errorMessage = "Value not found for VECTOR: \(vector)"
-                                    print("Value not found for VECTOR: \(vector)")
+                                    if self.results[vector] == nil {
+                                        self.results[vector] = []
+                                    }
+                                    self.results[vector]?.append((year: year, month: selectedMonth, value: String(format: "%.2f", value), product: productString))
                                 }
                             }
-                        } catch {
+                        } else {
                             DispatchQueue.main.async {
-                                errorMessage = "Error decoding data: \(error.localizedDescription)"
-                                print("Error decoding data for vector \(vector): \(error.localizedDescription)")
+                                errorMessage = "Value not found for VECTOR: \(vector)"
+                                print("Value not found for VECTOR: \(vector)")
                             }
                         }
-                    }.resume()
-                }
+                    } catch {
+                        DispatchQueue.main.async {
+                            errorMessage = "Error decoding data: \(error.localizedDescription)"
+                            print("Error decoding data for vector \(vector): \(error.localizedDescription)")
+                        }
+                    }
+                }.resume()
             }
         }
 
@@ -173,7 +184,6 @@ struct ContentView: View {
             isLoadingData = false
         }
     }
-    
 
     func fetchSeriesInfo(for vector: String, completion: @escaping (String) -> Void) {
         let apiUrl = "https://www150.statcan.gc.ca/t1/wds/rest/getSeriesInfoFromVector"
@@ -233,6 +243,7 @@ struct ContentView: View {
         }.resume()
     }
 }
+
 
 
 // Data Models

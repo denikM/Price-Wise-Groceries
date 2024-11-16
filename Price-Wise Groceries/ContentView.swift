@@ -19,10 +19,8 @@ struct ContentView: View {
     var body: some View {
         NavigationView {
             VStack {
-                // Input and selection views
                 InputAndSelectionView(vectorsText: $vectorsText, selectedProvince: $selectedProvince, selectedMonth: $selectedMonth, selectedYear: $selectedYear)
 
-                // Button to trigger data fetching
                 Button(action: {
                     isLoadingData = true
                     fetchValueData()
@@ -37,7 +35,6 @@ struct ContentView: View {
                 .padding()
                 .disabled(isLoadingData)
 
-                // Loading indicator, results, or error message
                 if isLoadingData {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle())
@@ -226,7 +223,7 @@ struct InputAndSelectionView: View {
 
             HStack {
                 Picker("Month", selection: $selectedMonth) {
-                    ForEach(1..<13, id: \.self) { month in
+                    ForEach(1..<13,id: \.self) { month in
                         Text(months[month - 1])
                     }
                 }
@@ -256,9 +253,20 @@ struct ResultsListView: View {
                     ForEach(results[vector]!, id: \.year) { result in
                         Text("\(result.year) - \(months[result.month - 1]): \(result.value) (\(result.product))")
                     }
+                    if let avg = calculateAverage(for: results[vector]!) {
+                        Text("Average: \(avg)")
+                            .font(.headline)
+                    }
                 }
             }
         }
         .listStyle(.plain)
+    }
+
+    func calculateAverage(for results: [(year: Int, month: Int, value: String, product: String)]) -> String? {
+        guard !results.isEmpty else { return nil }
+        let total = results.compactMap { Double($0.value) }.reduce(0, +)
+        let average = total / Double(results.count)
+        return String(format: "%.2f", average)
     }
 }

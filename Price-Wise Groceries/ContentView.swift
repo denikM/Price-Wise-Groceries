@@ -40,7 +40,7 @@ struct ContentView: View {
                         .progressViewStyle(CircularProgressViewStyle())
                         .scaleEffect(1.5)
                 } else if !results.isEmpty {
-                    ResultsListView(results: results, months: months)
+                    ResultsTableView(results: results, months: months, selectedYear: selectedYear, selectedMonth: selectedMonth)
                 } else if let errorMessage = errorMessage {
                     Text(errorMessage)
                         .foregroundColor(.red)
@@ -242,20 +242,31 @@ struct InputAndSelectionView: View {
     }
 }
 
-struct ResultsListView: View {
+struct ResultsTableView: View {
     let results: [String: [(year: Int, month: Int, value: String, product: String)]]
     let months: [String]
+    let selectedYear: Int
+    let selectedMonth: Int // Add this line
 
     var body: some View {
         List {
             ForEach(Array(results.keys), id: \.self) { vector in
                 Section(header: Text("Vector: \(vector)")) {
-                    ForEach(results[vector]!, id: \.year) { result in
-                        Text("\(result.year) - \(months[result.month - 1]): \(result.value) (\(result.product))")
+                    // Find the result for the selected month and year
+                    if let selectedResult = results[vector]?.first(where: { $0.year == selectedYear && $0.month == selectedMonth }) {
+                        HStack {
+                            Text(selectedResult.product)
+                            Spacer()
+                            Text("$\(selectedResult.value)")
+                        }
                     }
-                    if let avg = calculateAverage(for: results[vector]!) {
-                        Text("Average Monthly Price: $\(avg)")
-                            .font(.headline)
+
+                    // Calculate and display the average price since 2020
+                    let averagePrice = calculateAverage(for: results[vector]!)
+                    HStack {
+                        Text("Average Price for \(months[selectedMonth - 1]) Since 2020:")
+                        Spacer()
+                        Text(averagePrice)
                     }
                 }
             }
@@ -263,10 +274,11 @@ struct ResultsListView: View {
         .listStyle(.plain)
     }
 
-    func calculateAverage(for results: [(year: Int, month: Int, value: String, product: String)]) -> String? {
-        guard !results.isEmpty else { return nil }
-        let total = results.compactMap { Double($0.value) }.reduce(0, +)
-        let average = total / Double(results.count)
-        return String(format: "%.2f", average)
+    func calculateAverage(for results: [(year: Int, month: Int, value: String, product: String)]) -> String {
+        let filteredResults = results.filter { $0.month == selectedMonth && $0.year >= 2020 }
+        guard !filteredResults.isEmpty else { return "N/A" }
+        let total = filteredResults.compactMap { Double($0.value) }.reduce(0, +)
+        let average = total / Double(filteredResults.count)
+        return String(format: "$%.2f", average) // Add the dollar sign here
     }
 }

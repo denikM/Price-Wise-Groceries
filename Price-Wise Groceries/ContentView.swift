@@ -13,43 +13,16 @@ struct ContentView: View {
                      "Prince Edward Island", "New Brunswick", "Quebec", "Manitoba",
                      "Saskatchewan", "Alberta", "British Columbia"]
     let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    let years = Array(2022...2024)
+    let years = Array(2020...2024)
     private let calendar = Calendar.current
 
     var body: some View {
         NavigationView {
             VStack {
-                TextEditor(text: $vectorsText)
-                    .border(Color.gray, width: 1)
-                    .padding()
-                    .frame(height: 100)
+                // Input and selection views
+                InputAndSelectionView(vectorsText: $vectorsText, selectedProvince: $selectedProvince, selectedMonth: $selectedMonth, selectedYear: $selectedYear)
 
-                Picker("Select Province", selection: $selectedProvince) {
-                    ForEach(provinces, id: \.self) { province in
-                        Text(province)
-                    }
-                }
-                .pickerStyle(MenuPickerStyle())
-                .padding()
-
-                HStack {
-                    Picker("Month", selection: $selectedMonth) {
-                        ForEach(1..<13, id: \.self) { month in
-                            Text(months[month - 1])
-                        }
-                    }
-                    .pickerStyle(MenuPickerStyle())
-                    .padding()
-
-                    Picker("Year", selection: $selectedYear) {
-                        ForEach(years, id: \.self) { year in
-                            Text("\(year)")
-                        }
-                    }
-                    .pickerStyle(MenuPickerStyle())
-                    .padding()
-                }
-
+                // Button to trigger data fetching
                 Button(action: {
                     isLoadingData = true
                     fetchValueData()
@@ -64,21 +37,13 @@ struct ContentView: View {
                 .padding()
                 .disabled(isLoadingData)
 
+                // Loading indicator, results, or error message
                 if isLoadingData {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle())
                         .scaleEffect(1.5)
                 } else if !results.isEmpty {
-                    List {
-                        ForEach(Array(results.keys), id: \.self) { vector in
-                            Section(header: Text("Vector: \(vector)")) {
-                                ForEach(results[vector]!, id: \.year) { result in
-                                    Text("\(result.year) - \(months[result.month - 1]): \(result.value) (\(result.product))")
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(.plain)
+                    ResultsListView(results: results, months: months)
                 } else if let errorMessage = errorMessage {
                     Text(errorMessage)
                         .foregroundColor(.red)
@@ -100,89 +65,72 @@ struct ContentView: View {
 
         let group = DispatchGroup()
         for vector in vectors {
-            // Fetch data for the selected month across all three years
             for year in years {
                 group.enter()
-
-                // Correctly create DateComponents and Date
-                var dateComponents = calendar.dateComponents([.year, .month], from: Date())
-                dateComponents.year = year
-                dateComponents.month = selectedMonth
-
-                guard let date = calendar.date(from: dateComponents) else {
-                    DispatchQueue.main.async {
-                        errorMessage = "Error creating date"
-                        isLoadingData = false
-                    }
-                    return
-                }
-
-                let startDate = "\(year)-\(String(format: "%02d", selectedMonth))-01"
-                let endDate = "\(year)-\(String(format: "%02d", selectedMonth))-\(calendar.component(.day, from: date))"
-                let apiUrl = "https://www150.statcan.gc.ca/t1/wds/rest/getDataFromVectorByReferencePeriodRange?vectorIds=\(vector)&startRefPeriod=\(startDate)&endReferencePeriod=\(endDate)"
-
-                print("Fetching data for vector: \(vector), year: \(year), month: \(selectedMonth)")
-                print("API URL: \(apiUrl)")
-
-                guard let url = URL(string: apiUrl) else {
-                    DispatchQueue.main.async {
-                        errorMessage = "Invalid API URL"
-                        isLoadingData = false
-                    }
-                    return
-                }
-
-                URLSession.shared.dataTask(with: url) { data, response, error in
-                    defer { group.leave() }
-                    if let error = error {
-                        DispatchQueue.main.async {
-                            errorMessage = "Error fetching data: \(error.localizedDescription)"
-                            print("Error fetching data for vector \(vector): \(error.localizedDescription)")
-                        }
-                        return
-                    }
-
-                    guard let data = data else {
-                        DispatchQueue.main.async {
-                            errorMessage = "No data received for vector \(vector)"
-                            print("No data received for vector \(vector)")
-                        }
-                        return
-                    }
-
-                    do {
-                        let decoder = JSONDecoder()
-                        let apiResponse = try decoder.decode([APIResponse].self, from: data)
-
-                        if let value = apiResponse.first?.object?.vectorDataPoint.first?.value {
-                            // Fetch series information to get the product string
-                            fetchSeriesInfo(for: vector) { productString in
-                                DispatchQueue.main.async {
-                                    if self.results[vector] == nil {
-                                        self.results[vector] = []
-                                    }
-                                    self.results[vector]?.append((year: year, month: selectedMonth, value: String(format: "%.2f", value), product: productString))
-                                }
-                            }
-                        } else {
-                            DispatchQueue.main.async {
-                                errorMessage = "Value not found for VECTOR: \(vector)"
-                                print("Value not found for VECTOR: \(vector)")
-                            }
-                        }
-                    } catch {
-                        DispatchQueue.main.async {
-                            errorMessage = "Error decoding data: \(error.localizedDescription)"
-                            print("Error decoding data for vector \(vector): \(error.localizedDescription)")
-                        }
-                    }
-                }.resume()
+                fetchDataForVector(vector, year: year, month: selectedMonth, group: group)
             }
         }
 
         group.notify(queue: .main) {
             isLoadingData = false
         }
+    }
+
+    func fetchDataForVector(_ vector: String, year: Int, month: Int, group: DispatchGroup) {
+        let startDate = "\(year)-\(String(format: "%02d", month))-01"
+
+        var dateComponents = calendar.dateComponents([.year, .month], from: Date())
+        dateComponents.year = year
+        dateComponents.month = month
+        guard let date = calendar.date(from: dateComponents) else {
+            handleFetchError("Error creating date", group: group)
+            return
+        }
+        let endDate = "\(year)-\(String(format: "%02d", month))-\(calendar.component(.day, from: date))"
+
+        let apiUrl = "https://www150.statcan.gc.ca/t1/wds/rest/getDataFromVectorByReferencePeriodRange?vectorIds=\(vector)&startRefPeriod=\(startDate)&endReferencePeriod=\(endDate)"
+
+        print("Fetching data for vector: \(vector), year: \(year), month: \(month)")
+        print("API URL: \(apiUrl)")
+
+        guard let url = URL(string: apiUrl) else {
+            handleFetchError("Invalid API URL", group: group)
+            return
+        }
+
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            defer { group.leave() }
+
+            if let error = error {
+                handleFetchError("Error fetching data: \(error.localizedDescription)", group: group)
+                return
+            }
+
+            guard let data = data else {
+                handleFetchError("No data received for vector \(vector)", group: group)
+                return
+            }
+
+            do {
+                let decoder = JSONDecoder()
+                let apiResponse = try decoder.decode([APIResponse].self, from: data)
+
+                if let value = apiResponse.first?.object?.vectorDataPoint.first?.value {
+                    fetchSeriesInfo(for: vector) { productString in
+                        DispatchQueue.main.async {
+                            if self.results[vector] == nil {
+                                self.results[vector] = []
+                            }
+                            self.results[vector]?.append((year: year, month: selectedMonth, value: String(format: "%.2f", value), product: productString))
+                        }
+                    }
+                } else {
+                    handleFetchError("Value not found for VECTOR: \(vector)", group: group)
+                }
+            } catch {
+                handleFetchError("Error decoding data: \(error.localizedDescription)", group: group)
+            }
+        }.resume()
     }
 
     func fetchSeriesInfo(for vector: String, completion: @escaping (String) -> Void) {
@@ -196,7 +144,6 @@ struct ContentView: View {
             return
         }
 
-        // Assuming vector is convertible to Int
         guard let vectorId = Int(vector) else {
             completion("Invalid vector ID")
             return
@@ -206,11 +153,9 @@ struct ContentView: View {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody
- = try? JSONEncoder().encode(requestBody)
+        request.httpBody = try? JSONEncoder().encode(requestBody)
 
         URLSession.shared.dataTask(with: request) { data, response, error in
-
             if let error = error {
                 print("Error fetching product info for vector \(vector): \(error.localizedDescription)")
                 completion("Error fetching product")
@@ -229,7 +174,6 @@ struct ContentView: View {
                 let decoder = JSONDecoder()
                 let seriesResponse = try decoder.decode([SeriesInfoResponse].self, from: data)
                 if let productString = seriesResponse.first?.object?.SeriesTitleEn {
-                    // Split the product string by semicolon and take the last part
                     let productName = productString.components(separatedBy: ";").last?.trimmingCharacters(in: .whitespaces) ?? "Product not found"
                     completion(productName)
                 } else {
@@ -242,9 +186,82 @@ struct ContentView: View {
             }
         }.resume()
     }
+
+    func handleFetchError(_ message: String, group: DispatchGroup) {
+        DispatchQueue.main.async {
+            errorMessage = message
+            print(message)
+            isLoadingData = false
+            group.leave()
+        }
+    }
 }
 
+struct InputAndSelectionView: View {
+    @Binding var vectorsText: String
+    @Binding var selectedProvince: String
+    @Binding var selectedMonth: Int
+    @Binding var selectedYear: Int
 
+    let provinces = ["Canada", "Nova Scotia", "Ontario", "Newfoundland and Labrador",
+                     "Prince Edward Island", "New Brunswick", "Quebec", "Manitoba",
+                     "Saskatchewan", "Alberta", "British Columbia"]
+    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    let years = Array(2020...2024)
+
+    var body: some View {
+        VStack {
+            TextEditor(text: $vectorsText)
+                .border(Color.gray, width: 1)
+                .padding()
+                .frame(height: 100)
+
+            Picker("Select Province", selection: $selectedProvince) {
+                ForEach(provinces, id: \.self) { province in
+                    Text(province)
+                }
+            }
+            .pickerStyle(MenuPickerStyle())
+            .padding()
+
+            HStack {
+                Picker("Month", selection: $selectedMonth) {
+                    ForEach(1..<13, id: \.self) { month in
+                        Text(months[month - 1])
+                    }
+                }
+                .pickerStyle(MenuPickerStyle())
+                .padding()
+
+                Picker("Year", selection: $selectedYear) {
+                    ForEach(years, id: \.self) { year in
+                        Text("\(year)")
+                    }
+                }
+                .pickerStyle(MenuPickerStyle())
+                .padding()
+            }
+        }
+    }
+}
+
+struct ResultsListView: View {
+    let results: [String: [(year: Int, month: Int, value: String, product: String)]]
+    let months: [String]
+
+    var body: some View {
+        List {
+            ForEach(Array(results.keys), id: \.self) { vector in
+                Section(header: Text("Vector: \(vector)")) {
+                    ForEach(results[vector]!, id: \.year) { result in
+                        Text("\(result.year) - \(months[result.month - 1]): \(result.value) (\(result.product))")
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+}
 
 // Data Models
 struct APIResponse: Decodable {

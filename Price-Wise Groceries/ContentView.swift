@@ -254,7 +254,7 @@ struct ResultsListView: View {
                         Text("\(result.year) - \(months[result.month - 1]): \(result.value) (\(result.product))")
                     }
                     if let avg = calculateAverage(for: results[vector]!) {
-                        Text("Average: \(avg)")
+                        Text("Average Monthly Price: $\(avg)")
                             .font(.headline)
                     }
                 }
